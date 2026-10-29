@@ -1,0 +1,6 @@
+test,state,action,expected,result,date
+T1,OFF,demand on,lead starts then RUN,,
+T2,PROVING,block flow,FAULT then lag starts,,
+T3,RUN,low level lost,immediate stop + alarm,,
+T4,FAULT x3,repeat,LOCKOUT,,
+T5,LOCKOUT,manual reset,OFF,,
