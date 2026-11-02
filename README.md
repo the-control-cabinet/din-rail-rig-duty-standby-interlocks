@@ -17,6 +17,92 @@
 
 ---
 
+## Status at a glance
+
+| Item | Status |
+|---|---|
+| Enclosure, row 1 (24 V PSU, MCB, Trend IQ411) | ✅ Built |
+| Row 2 (ESP32-S3, opto relays, 2N7000 buffers, fused terminals, pilot lights) | 🚧 Wiring in progress |
+| Two 24 V brushless submersible pumps, tank, DS18B20 probes | ✅ In hand |
+| Flow proving and low-level float | ⏳ To add |
+| Duty/standby and state machine written ([docs 02-03](docs/02-duty-standby.md)); test record T1-T5 ([data](data/test-record.csv)) | 📐 Designed; tests to run |
+
+## Why a rig
+
+Duty/standby pumps and their interlocks are bread-and-butter BMS: almost every plant room has a pair of pumps that must share run hours, fail over automatically and never run dry. The rig makes those sequences real (with real 24 V pumps, a real tank and real permissives) so they can be tested by forcing faults, then **re-implemented on a Trend IQ411 and in a PLC** and compared against the same test record.
+
+## The rig
+
+```mermaid
+flowchart TB
+    subgraph EN["400 × 300 mm enclosure"]
+        T1["Trunking: mains entry (segregated)"]
+        R1["Row 1: 24 V PSU (HDR-60-24) · MCB · Trend IQ411"]
+        T2["Trunking"]
+        R2["Row 2: ESP32-S3 · opto-isolated 24 V relays ·<br/>2N7000 buffers · fused terminals · pilot lights"]
+        T3["Trunking: I/O exit"]
+    end
+    R2 --> PA["Pump A (24 V)"]
+    R2 --> PB["Pump B (24 V)"]
+    FL["Low-level float"] --> R2
+    FP["Flow proving<br/>(switch or current)"] --> R2
+    PA --> TK["Tank"]
+    PB --> TK
+```
+
+## Duty/standby (#7)
+
+| Function | Rule |
+|---|---|
+| Lead selection | Lowest run hours becomes lead at each rotation; weekly or every N run hours |
+| Start | On demand, start the lead; prove flow within 10 s |
+| Failover | Lead fails to prove → FAULT (P2) → start the lag automatically |
+| Both failed | P1: no pump available |
+| Exercise | Each idle pump runs 30 s weekly (anti-seize) |
+| Manual | Hand/off/auto per pump; hand bypasses rotation but **never** the safety permissives |
+| Records | Run hours, starts and faults per pump; rotation log |
+
+## Pump state machine and interlocks (#9)
+
+```mermaid
+stateDiagram-v2
+    [*] --> OFF
+    OFF --> START: demand AND permissives OK
+    START --> PROVING: pump output on
+    PROVING --> RUN: flow proven within 10 s
+    PROVING --> FAULT: not proven
+    RUN --> OFF: demand removed
+    RUN --> FAULT: flow lost > 5 s
+    FAULT --> LOCKOUT: 3 faults in 1 h
+    FAULT --> OFF: auto-reset after 5 min
+    LOCKOUT --> OFF: manual reset
+```
+
+| Permissive | Effect if lost |
+|---|---|
+| Low-level float OK | Immediate stop (dry-run protection), alarm |
+| Mode = AUTO | No automatic start |
+| No lockout | No start until reset |
+
+## Test record
+
+| Test | From state | Action | Expected |
+|---|---|---|---|
+| T1 | OFF | Demand on | Lead starts, then RUN |
+| T2 | PROVING | Block flow | FAULT, then the lag starts |
+| T3 | RUN | Low level lost | Immediate stop + alarm |
+| T4 | FAULT ×3 | Repeat | LOCKOUT |
+| T5 | LOCKOUT | Manual reset | OFF |
+
+Every transition is forced and observed, and every permissive removed in every state. The **same T1-T5** are run on the Trend and PLC versions, so the platforms are compared on identical tests.
+
+## Safety
+
+- Mains segregated at the top, I/O at the bottom; the 24 V side fused per circuit.
+- Pumps never run dry: the low-level permissive, hardwired where possible.
+
+**Where this thinking goes next:** the OpenTherm changeover on the real boiler uses the same interlock pattern (permissives, proving, latched fault, manual reset) to fall back safely to Evohome control.
+
 ## Documents
 
 | Doc | Contents |
